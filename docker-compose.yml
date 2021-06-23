@@ -1,0 +1,177 @@
+version: '3.5'
+# Network
+networks:
+  sabre:
+      driver: bridge
+services:
+
+  next_cloud:
+    restart: always
+    build: .
+    environment:
+      SQL: 'mysql'
+      HTTPS_METHOD: "noredirect"
+      NEXTCLOUD_AUTOINSTALL: "YES"
+      WITH_REDIS: "YES"
+      ENABLE_XDEBUG: 1
+      XDEBUG_CONFIG: client_host=172.28.0.1 # this is gateway address in network docker
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "./src:/var/www/html"
+      - "./conf/nginx.conf:/etc/nginx/nginx.conf"
+      - "./conf/nginx-site-ssl.conf:/etc/nginx/conf.d/nginx-site-ssl.conf"
+    networks:
+      - sabre
+  # database
+  mysql_db:
+    image: mysql
+    cap_add:
+      - SYS_NICE
+    restart: always
+    env_file: ./.env
+    ports:
+        - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      #- ./database/mysql:/var/lib/mysql
+    networks:
+      - sabre
+  # admin for mysql
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 9099:8080
+    networks:
+      - sabre
+
+  redis:
+    image: redis
+    networks:
+      - sabre
+
+  ldap:
+    image: osixia/openldap
+    command: --copy-service --loglevel debug
+    expose:
+      - 389
+      - 636
+    ports:
+      - 3389:389
+    environment:
+      LDAP_DOMAIN: planetexpress.com
+      LDAP_BASE_DN: dc=planetexpress,dc=com
+    volumes:
+      - ./data/ldap:/container/service/slapd/assets/config/bootstrap/ldif/custom
+    networks:
+      - sabre
+
+  ldapadmin:
+    image: osixia/phpldapadmin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: ldap
+      PHPLDAPADMIN_HTTPS: 'false'
+    ports:
+      - "${PORTBASE:-800}8:80"
+    networks:
+      - sabre
+
+  mail:
+    image: mailhog/mailhog
+    environment:
+      VIRTUAL_HOST: "mail${DOMAIN_SUFFIX}"
+      VIRTUAL_PORT: 8025
+    networks:
+      - sabre
+
+  smb:
+    image: dperson/samba
+    ports:
+      - 139
+      - 445
+    environment:
+      # -u "<username;password>[;ID;group;GID]"
+      USER: "admin;admin"
+      USER2: "user1;user1"
+      USER3: "user1;user1"
+      # -s "<name;/path>[;browse;readonly;guest;users;admins;writelist;comment]"
+      SHARE: "public;/smbmount;yes;no;yes"
+      SHARE2: "user1 private share;/smb/user1;no;no;no;user1"
+      SHARE3: "user2 private share;/smb/user2;no;no;no;user2"
+    volumes:
+      - smb:/smbmount
+    networks:
+      - sabre
+
+  blackfire:
+    image: blackfire/blackfire
+    environment:
+      - BLACKFIRE_SERVER_ID
+      - BLACKFIRE_SERVER_TOKEN
+    networks:
+      - sabre
+
+  collabora:
+    image: collabora/code:latest
+    expose:
+      - 9980
+    cap_add:
+      - MKNOD
+    environment:
+      domain: nextcloud${DOMAIN_SUFFIX}
+      dictionaries: de_DE en_US en_GB
+      username: admin
+      password: admin
+      VIRTUAL_HOST: collabora${DOMAIN_SUFFIX}
+      VIRTUAL_PORT: 9980
+      VIRTUAL_PROTO: https
+    networks:
+      - sabre
+
+  onlyoffice:
+    image: onlyoffice/documentserver-ie:latest
+    environment:
+      VIRTUAL_HOST: onlyoffice${DOMAIN_SUFFIX}
+    expose:
+      - '80'
+    volumes:
+      - document_data:/var/www/onlyoffice/Data
+      - document_log:/var/log/onlyoffice
+    networks:
+      - sabre
+
+  minio:
+    image: minio/minio
+    environment:
+      MINIO_ACCESS_KEY: nextcloud
+      MINIO_SECRET_KEY: nextcloud
+    ports:
+      - "${PORTBASE:-800}5:9000"
+    volumes:
+      - objectstorage_minio:/data
+    command: server /data
+    networks:
+      - sabre
+
+  s3:
+    image: lphoward/fake-s3
+    expose:
+      - 4569
+    volumes:
+      - objectstorage_fakes3:/fakes3_root
+    networks:
+      - sabre
+
+
+volumes:
+  mysql_data:
+  data:
+  config:
+  document_data:
+  document_log:
+  objectstorage_fakes3:
+  objectstorage_minio:
+  smb:
+  elasticsearch_data:
